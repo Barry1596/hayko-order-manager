@@ -5,36 +5,26 @@
  * (atau sheet dummy testing) via SpreadsheetApp.openById().
  * Bisa di-deploy sebagai STANDALONE project (tidak harus bound ke sheet).
  *
- * Semua operasi (baca/tulis/update/delete) dilakukan via GET request
- * dengan parameter URL — Apps Script Web App paling reliable via GET.
+ * STRATEGI HTTP:
+ *   - GET  untuk BACA (getAll, getOne, unique) — reliable, payload kecil
+ *   - POST (Content-Type: text/plain) untuk TULIS (append, update, delete)
+ *     karena Apps Script sering 411/reject application/json.
  *
  * --- CARA INSTALL (STANDALONE) ---
  * 1. Buka https://script.google.com/home/projects/create (editor kosong).
  * 2. Hapus isi Code.gs default, paste seluruh isi file ini.
- * 3. Ganti SHEET_ID di bawah dengan ID spreadsheet Anda
- *    (bagian /d/<ID>/edit dari URL sheet).
+ * 3. Ganti SHEET_ID di bawah dengan ID spreadsheet Anda.
  * 4. Klik Save (Ctrl+S), beri nama project "Hayko Backend".
  * 5. Klik Deploy → New deployment:
  *      - Type          : Web app
  *      - Description   : Hayko API v1
  *      - Execute as    : Me
  *      - Who has access: Anyone
- *    → klik Deploy.
  * 6. Authorize saat diminta: Advanced → Go to Hayko Backend (unsafe) → Allow.
- * 7. Salin Web App URL (https://script.google.com/macros/s/XXXX/exec).
- *    Set sebagai SHEETS_API_URL di .env.local / Vercel.
+ * 7. Salin Web App URL. Set sebagai SHEETS_API_URL di .env.local / Vercel.
  *
  * --- SETELAH UPDATE SCRIPT ---
- * Setiap perubahan WAJIB re-deploy: Deploy → Manage deployments → Edit →
- * Version: New version → Deploy. URL TIDAK berubah.
- *
- * --- API ENDPOINTS (GET) ---
- *   ?action=getAll                 → semua order
- *   ?action=getOne&row=3           → 1 order by rowIndex
- *   ?action=append&data={...}      → tambah order baru (JSON-encoded)
- *   ?action=update&row=3&data={...}→ update order
- *   ?action=delete&row=3           → hapus order
- *   ?action=unique                 → nilai unik untuk autocomplete
+ * Deploy → Manage deployments → Edit → Version: New version → Deploy. URL tetap.
  */
 
 /** === KONFIGURASI === */
@@ -44,9 +34,7 @@ const HEADER_ROWS = 2;                // baris header (judul + sub-header)
 const DATA_START_ROW = 3;             // baris pertama data
 const NUM_COLUMNS = 18;               // kolom A–R
 
-/** Token rahasia opsional untuk autentikasi minimal.
- *  Diisi via Project Settings → Script properties → APP_TOKEN.
- *  Kalau dikosongkan, endpoint terbuka (sesuai permintaan: "URL publik no problem"). */
+/** Token rahasia opsional. Diisi via Project Settings → Script properties → APP_TOKEN. */
 function getToken() {
   return PropertiesService.getScriptProperties().getProperty('APP_TOKEN') || '';
 }
@@ -58,24 +46,9 @@ function getSheet() {
 
 /** Mapping kolom A–R → nama field internal. */
 const FIELDS = [
-  'no',               // A
-  'event',            // B
-  'nama',             // C
-  'brand',            // D
-  'artikel',          // E
-  'warna_tipe',       // F
-  'ukuran',           // G
-  'jumlah',           // H
-  'harga_cust',       // I
-  'harga_asli',       // J
-  'profit',           // K
-  'fee',              // L
-  'add_fee',          // M
-  'total_fee',        // N
-  'status_pesanan',   // O
-  'status_pembayaran',// P
-  'metode_pembayaran',// Q
-  'ditalangi_oleh',   // R
+  'no', 'event', 'nama', 'brand', 'artikel', 'warna_tipe', 'ukuran', 'jumlah',
+  'harga_cust', 'harga_asli', 'profit', 'fee', 'add_fee', 'total_fee',
+  'status_pesanan', 'status_pembayaran', 'metode_pembayaran', 'ditalangi_oleh',
 ];
 
 /** Ubah array 1 baris (18 cell) jadi object field. */
@@ -89,24 +62,21 @@ function rowToObject(row, sheetRowIndex) {
   return obj;
 }
 
-/** Ambil semua order. */
+/** ===== OPERATIONS ===== */
+
 function getAllOrders() {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow < DATA_START_ROW) return [];
-
   const values = sheet.getRange(DATA_START_ROW, 1, lastRow - HEADER_ROWS, NUM_COLUMNS).getValues();
   const result = [];
   for (let i = 0; i < values.length; i++) {
     const obj = rowToObject(values[i], DATA_START_ROW + i);
-    if (obj && (obj.event || obj.nama)) {
-      result.push(obj);
-    }
+    if (obj && (obj.event || obj.nama)) result.push(obj);
   }
   return result;
 }
 
-/** Ambil 1 order by sheet row index. */
 function getOrderByRowIndex(rowIndex) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -115,12 +85,9 @@ function getOrderByRowIndex(rowIndex) {
   return rowToObject(row, rowIndex);
 }
 
-/** Tambah order baru. Return rowIndex baru. */
 function appendOrder(data) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
-
-  // Hitung No urut berikutnya (kolom A)
   let nextNo = 1;
   if (lastRow >= DATA_START_ROW) {
     const colA = sheet.getRange(DATA_START_ROW, 1, lastRow - HEADER_ROWS, 1).getValues();
@@ -131,35 +98,22 @@ function appendOrder(data) {
       }
     }
   }
-
   const newRow = [
     nextNo,
-    data.event || '',
-    data.nama || '',
-    data.brand || '',
-    data.artikel || '',
-    data.warna_tipe || '',
-    data.ukuran || '',
-    Number(data.jumlah) || 1,
-    Number(data.harga_cust) || 0,
+    data.event || '', data.nama || '', data.brand || '', data.artikel || '',
+    data.warna_tipe || '', data.ukuran || '',
+    Number(data.jumlah) || 1, Number(data.harga_cust) || 0,
     data.harga_asli !== undefined && data.harga_asli !== null && data.harga_asli !== '' ? Number(data.harga_asli) : '',
-    Number(data.profit) || 0,
-    Number(data.fee) || 0,
-    Number(data.add_fee) || 0,
-    Number(data.total_fee) || 0,
-    data.status_pesanan || 'Fix Order',
-    data.status_pembayaran || 'Not Yet',
-    data.metode_pembayaran || '',
-    data.ditalangi_oleh || '',
+    Number(data.profit) || 0, Number(data.fee) || 0, Number(data.add_fee) || 0, Number(data.total_fee) || 0,
+    data.status_pesanan || 'Fix Order', data.status_pembayaran || 'Not Yet',
+    data.metode_pembayaran || '', data.ditalangi_oleh || '',
   ];
-
   const targetRow = lastRow + 1;
   sheet.getRange(targetRow, 1, 1, NUM_COLUMNS).setValues([newRow]);
   sheet.getRange(targetRow, 8, 1, 7).setNumberFormat('#,##0');
   return targetRow;
 }
 
-/** Update order berdasarkan sheet row index. */
 function updateOrder(rowIndex, data) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -169,31 +123,20 @@ function updateOrder(rowIndex, data) {
   const range = sheet.getRange(rowIndex, 1, 1, NUM_COLUMNS);
   const existingNo = range.getValues()[0][0];
   const updatedRow = [
-    existingNo, // A: No dipertahankan
-    data.event || '',
-    data.nama || '',
-    data.brand || '',
-    data.artikel || '',
-    data.warna_tipe || '',
-    data.ukuran || '',
-    Number(data.jumlah) || 1,
-    Number(data.harga_cust) || 0,
+    existingNo,
+    data.event || '', data.nama || '', data.brand || '', data.artikel || '',
+    data.warna_tipe || '', data.ukuran || '',
+    Number(data.jumlah) || 1, Number(data.harga_cust) || 0,
     data.harga_asli !== undefined && data.harga_asli !== null && data.harga_asli !== '' ? Number(data.harga_asli) : '',
-    Number(data.profit) || 0,
-    Number(data.fee) || 0,
-    Number(data.add_fee) || 0,
-    Number(data.total_fee) || 0,
-    data.status_pesanan || 'Fix Order',
-    data.status_pembayaran || 'Not Yet',
-    data.metode_pembayaran || '',
-    data.ditalangi_oleh || '',
+    Number(data.profit) || 0, Number(data.fee) || 0, Number(data.add_fee) || 0, Number(data.total_fee) || 0,
+    data.status_pesanan || 'Fix Order', data.status_pembayaran || 'Not Yet',
+    data.metode_pembayaran || '', data.ditalangi_oleh || '',
   ];
   range.setValues([updatedRow]);
   range.offset(0, 7, 1, 7).setNumberFormat('#,##0');
   return { ok: true, rowIndex: rowIndex };
 }
 
-/** Hapus order berdasarkan sheet row index. */
 function deleteOrder(rowIndex) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -204,7 +147,6 @@ function deleteOrder(rowIndex) {
   return { ok: true, rowIndex: rowIndex };
 }
 
-/** Ambil nilai unik untuk autocomplete. */
 function getUniqueValues() {
   const orders = getAllOrders();
   const pick = (field) => {
@@ -225,21 +167,17 @@ function getUniqueValues() {
   };
 }
 
-/** ===== HTTP ENTRY POINT (GET only) ===== */
+/** ===== HTTP ENTRY POINTS =====
+ *
+ * GET  → action=getAll | getOne&row=N | unique
+ * POST → body JSON: { "action": "append|update|delete", "row": N, "data": {...} }
+ *        Content-Type WAJIB text/plain (bukan application/json).
+ */
 
 function doGet(e) {
-  let result;
-  let status = 200;
+  let result, status = 200;
   try {
-    // Opsional: cek token
-    const token = getToken();
-    if (token) {
-      const provided = (e && e.parameter && e.parameter.token) || '';
-      if (provided !== token) {
-        return jsonOut({ error: 'Unauthorized' }, 401);
-      }
-    }
-
+    if (!checkToken(e)) return jsonOut({ error: 'Unauthorized' }, 401);
     const params = (e && e.parameter) || {};
     const action = params.action || 'getAll';
 
@@ -253,28 +191,11 @@ function doGet(e) {
         if (!result) { result = { error: 'Order tidak ditemukan' }; status = 404; }
         break;
       }
-      case 'append': {
-        const data = JSON.parse(params.data || '{}');
-        result = { rowIndex: appendOrder(data) };
-        status = 201;
-        break;
-      }
-      case 'update': {
-        const row = Number(params.row);
-        const data = JSON.parse(params.data || '{}');
-        result = updateOrder(row, data);
-        break;
-      }
-      case 'delete': {
-        const row = Number(params.row);
-        result = deleteOrder(row);
-        break;
-      }
       case 'unique':
         result = getUniqueValues();
         break;
       default:
-        result = { error: 'Action tidak dikenal: ' + action };
+        result = { error: 'Action GET tidak dikenal: ' + action };
         status = 400;
     }
   } catch (err) {
@@ -282,6 +203,52 @@ function doGet(e) {
     status = 500;
   }
   return jsonOut(result, status);
+}
+
+function doPost(e) {
+  let result, status = 200;
+  try {
+    if (!checkToken(e)) return jsonOut({ error: 'Unauthorized' }, 401);
+    // Parse body (text/plain JSON atau form)
+    let payload = {};
+    if (e.postData && e.postData.contents) {
+      try {
+        payload = JSON.parse(e.postData.contents);
+      } catch (err) {
+        return jsonOut({ error: 'Body bukan JSON valid' }, 400);
+      }
+    }
+    const action = payload.action;
+    const row = Number(payload.row);
+
+    switch (action) {
+      case 'append':
+        result = { rowIndex: appendOrder(payload.data || {}) };
+        status = 201;
+        break;
+      case 'update':
+        result = updateOrder(row, payload.data || {});
+        break;
+      case 'delete':
+        result = deleteOrder(row);
+        break;
+      default:
+        result = { error: 'Action POST tidak dikenal: ' + action };
+        status = 400;
+    }
+  } catch (err) {
+    result = { error: String(err) };
+    status = 500;
+  }
+  return jsonOut(result, status);
+}
+
+/** Cek token opsional. */
+function checkToken(e) {
+  const token = getToken();
+  if (!token) return true;
+  const provided = (e && e.parameter && e.parameter.token) || '';
+  return provided === token;
 }
 
 /** Output JSON. */
