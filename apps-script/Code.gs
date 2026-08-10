@@ -1,57 +1,54 @@
 /**
  * ===== Hayko Order Manager — Google Apps Script Backend =====
  *
- * Script ini berkomunikasi dengan Google Sheet "MASTER REKAP HAYKO"
- * (atau sheet dummy testing) via SpreadsheetApp.openById().
- * Bisa di-deploy sebagai STANDALONE project (tidak harus bound ke sheet).
+ * SEMUA operasi via GET request dengan parameter URL.
+ * Apps Script Web App hanya reliable via GET — POST sering reject/411/HTML.
  *
- * STRATEGI HTTP:
- *   - GET  untuk BACA (getAll, getOne, unique) — reliable, payload kecil
- *   - POST (Content-Type: text/plain) untuk TULIS (append, update, delete)
- *     karena Apps Script sering 411/reject application/json.
+ * ENDPOINTS (GET):
+ *   ?action=getAll                              → semua order
+ *   ?action=getOne&row=3                        → 1 order by rowIndex
+ *   ?action=append&data=URL_ENCODED_JSON        → tambah order baru
+ *   ?action=update&row=3&data=URL_ENCODED_JSON  → update order
+ *   ?action=delete&row=3                        → hapus order
+ *   ?action=unique                              → nilai unik autocomplete
+ *
+ * Payload data untuk append/update: object JSON yang di-URL-encode.
+ * Apps Script otomatis decode parameter, lalu JSON.parse isinya.
  *
  * --- CARA INSTALL (STANDALONE) ---
- * 1. Buka https://script.google.com/home/projects/create (editor kosong).
- * 2. Hapus isi Code.gs default, paste seluruh isi file ini.
- * 3. Ganti SHEET_ID di bawah dengan ID spreadsheet Anda.
- * 4. Klik Save (Ctrl+S), beri nama project "Hayko Backend".
- * 5. Klik Deploy → New deployment:
- *      - Type          : Web app
- *      - Description   : Hayko API v1
- *      - Execute as    : Me
- *      - Who has access: Anyone
- * 6. Authorize saat diminta: Advanced → Go to Hayko Backend (unsafe) → Allow.
- * 7. Salin Web App URL. Set sebagai SHEETS_API_URL di .env.local / Vercel.
+ * 1. https://script.google.com/home/projects/create → paste kode ini.
+ * 2. Ganti SHEET_ID dengan ID spreadsheet Anda (bagian /d/<ID>/edit).
+ * 3. Save (Ctrl+S) → beri nama "Hayko Backend".
+ * 4. Deploy → New deployment → Type: Web app
+ *      Execute as: Me | Who has access: Anyone → Deploy.
+ * 5. Authorize: Advanced → Go to Hayko Backend (unsafe) → Allow.
+ * 6. Copy Web App URL → set sebagai SHEETS_API_URL.
  *
- * --- SETELAH UPDATE SCRIPT ---
- * Deploy → Manage deployments → Edit → Version: New version → Deploy. URL tetap.
+ * --- UPDATE SCRIPT ---
+ * Deploy → Manage deployments → Edit → Version: New version → Deploy.
  */
 
 /** === KONFIGURASI === */
-const SHEET_ID = '1mzeRPcBLIsjGpBsSLi2cOtsyvcwG0xMj'; // ID spreadsheet (dari URL)
-const SHEET_NAME = 'Rekap Pesanan';   // nama tab CRUD
-const HEADER_ROWS = 2;                // baris header (judul + sub-header)
-const DATA_START_ROW = 3;             // baris pertama data
-const NUM_COLUMNS = 18;               // kolom A–R
+const SHEET_ID = '1mzeRPcBLIsjGpBsSLi2cOtsyvcwG0xMj';
+const SHEET_NAME = 'Rekap Pesanan';
+const HEADER_ROWS = 2;
+const DATA_START_ROW = 3;
+const NUM_COLUMNS = 18;
 
-/** Token rahasia opsional. Diisi via Project Settings → Script properties → APP_TOKEN. */
 function getToken() {
   return PropertiesService.getScriptProperties().getProperty('APP_TOKEN') || '';
 }
 
-/** Sheet aktif. Pakai openById karena script standalone. */
 function getSheet() {
   return SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
 }
 
-/** Mapping kolom A–R → nama field internal. */
 const FIELDS = [
   'no', 'event', 'nama', 'brand', 'artikel', 'warna_tipe', 'ukuran', 'jumlah',
   'harga_cust', 'harga_asli', 'profit', 'fee', 'add_fee', 'total_fee',
   'status_pesanan', 'status_pembayaran', 'metode_pembayaran', 'ditalangi_oleh',
 ];
 
-/** Ubah array 1 baris (18 cell) jadi object field. */
 function rowToObject(row, sheetRowIndex) {
   if (!row || row.length === 0) return null;
   const obj = {};
@@ -167,12 +164,7 @@ function getUniqueValues() {
   };
 }
 
-/** ===== HTTP ENTRY POINTS =====
- *
- * GET  → action=getAll | getOne&row=N | unique
- * POST → body JSON: { "action": "append|update|delete", "row": N, "data": {...} }
- *        Content-Type WAJIB text/plain (bukan application/json).
- */
+/** ===== HTTP ENTRY (GET only) ===== */
 
 function doGet(e) {
   let result, status = 200;
@@ -191,59 +183,37 @@ function doGet(e) {
         if (!result) { result = { error: 'Order tidak ditemukan' }; status = 404; }
         break;
       }
+      case 'append': {
+        const data = JSON.parse(params.data || '{}');
+        result = { rowIndex: appendOrder(data) };
+        status = 201;
+        break;
+      }
+      case 'update': {
+        const row = Number(params.row);
+        const data = JSON.parse(params.data || '{}');
+        result = updateOrder(row, data);
+        break;
+      }
+      case 'delete': {
+        const row = Number(params.row);
+        result = deleteOrder(row);
+        break;
+      }
       case 'unique':
         result = getUniqueValues();
         break;
       default:
-        result = { error: 'Action GET tidak dikenal: ' + action };
+        result = { error: 'Action tidak dikenal: ' + action };
         status = 400;
     }
   } catch (err) {
-    result = { error: String(err) };
+    result = { error: String(err) + (err && err.stack ? ' | ' + err.stack : '') };
     status = 500;
   }
   return jsonOut(result, status);
 }
 
-function doPost(e) {
-  let result, status = 200;
-  try {
-    if (!checkToken(e)) return jsonOut({ error: 'Unauthorized' }, 401);
-    // Parse body (text/plain JSON atau form)
-    let payload = {};
-    if (e.postData && e.postData.contents) {
-      try {
-        payload = JSON.parse(e.postData.contents);
-      } catch (err) {
-        return jsonOut({ error: 'Body bukan JSON valid' }, 400);
-      }
-    }
-    const action = payload.action;
-    const row = Number(payload.row);
-
-    switch (action) {
-      case 'append':
-        result = { rowIndex: appendOrder(payload.data || {}) };
-        status = 201;
-        break;
-      case 'update':
-        result = updateOrder(row, payload.data || {});
-        break;
-      case 'delete':
-        result = deleteOrder(row);
-        break;
-      default:
-        result = { error: 'Action POST tidak dikenal: ' + action };
-        status = 400;
-    }
-  } catch (err) {
-    result = { error: String(err) };
-    status = 500;
-  }
-  return jsonOut(result, status);
-}
-
-/** Cek token opsional. */
 function checkToken(e) {
   const token = getToken();
   if (!token) return true;
@@ -251,7 +221,6 @@ function checkToken(e) {
   return provided === token;
 }
 
-/** Output JSON. */
 function jsonOut(obj, status) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))

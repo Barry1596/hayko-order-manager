@@ -1,16 +1,12 @@
 // ===== Sheets API client — call Apps Script Web App =====
 //
-// STRATEGI HTTP (hybrid):
-//   - GET  untuk BACA (getAll, getOne, unique) — Apps Script doGet, payload kecil
-//   - POST dengan Content-Type: text/plain untuk TULIS (append, update, delete)
-//     Apps Script sering 411/reject application/json, tapi text/plain OK.
-//
-// Untuk tulis, body dikirim sebagai JSON string dengan Content-Type text/plain,
-// dan Apps Script doPost akan parse body tsb.
+// SEMUA operasi via GET (Apps Script Web App hanya reliable via GET).
+// Untuk tulis (append/update), payload di-encode sebagai JSON di parameter
+// ?data=... pada URL. Apps Script otomatis decode & JSON.parse.
 
 import type { Order, OrderOption } from "@/types";
 
-/** Ambil base URL Apps Script dari env (tanpa trailing slash). */
+/** Ambil base URL Apps Script dari env. */
 function baseUrl(): string {
   const url = process.env.SHEETS_API_URL;
   if (!url) {
@@ -21,54 +17,44 @@ function baseUrl(): string {
   return url.replace(/\/$/, "");
 }
 
-/** Token opsional (kalau di-set di Script Properties Apps Script). */
+/** Token opsional. */
 function token(): string {
   return process.env.SHEETS_API_TOKEN || "";
 }
 
-/** GET request ke Apps Script (untuk baca). */
-async function callGet(params: Record<string, string | number | undefined>): Promise<unknown> {
+/**
+ * GET request ke Apps Script.
+ * Params:
+ *   - untuk baca: { action: "getAll" | "getOne" | "unique" }
+ *   - untuk tulis: { action: "append" | "update" | "delete", row?, data? }
+ *     data (object) akan di-JSON.stringify lalu di-set sebagai param "data".
+ */
+async function callApi(params: {
+  action: string;
+  row?: number;
+  data?: unknown;
+}): Promise<unknown> {
   const url = new URL(baseUrl());
+  url.searchParams.set("action", params.action);
   const t = token();
   if (t) url.searchParams.set("token", t);
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+  if (params.row !== undefined) url.searchParams.set("row", String(params.row));
+  if (params.data !== undefined) {
+    url.searchParams.set("data", JSON.stringify(params.data));
   }
+
   const res = await fetch(url.toString(), {
     method: "GET",
     redirect: "follow",
     cache: "no-store",
     next: { revalidate: 0 },
   });
+
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`[sheets GET] HTTP ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`[sheets] HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
-  const json = await res.json();
-  if (json && typeof json === "object" && "error" in json) {
-    throw new Error(`[sheets] ${json.error}`);
-  }
-  return json;
-}
 
-/** POST request ke Apps Script (untuk tulis/update/delete).
- *  Body = JSON string, Content-Type: text/plain (syarat Apps Script). */
-async function callPost(payload: Record<string, unknown>): Promise<unknown> {
-  const url = new URL(baseUrl());
-  const t = token();
-  if (t) url.searchParams.set("token", t);
-
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(payload),
-    redirect: "follow",
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`[sheets POST] HTTP ${res.status}: ${text.slice(0, 200)}`);
-  }
   const json = await res.json();
   if (json && typeof json === "object" && "error" in json) {
     throw new Error(`[sheets] ${json.error}`);
@@ -78,44 +64,38 @@ async function callPost(payload: Record<string, unknown>): Promise<unknown> {
 
 /** ===== HIGH-LEVEL METHODS ===== */
 
-/** Ambil semua order. */
 export async function getAllOrders(): Promise<Order[]> {
-  const data = (await callGet({ action: "getAll" })) as Order[];
+  const data = (await callApi({ action: "getAll" })) as Order[];
   return Array.isArray(data) ? data : [];
 }
 
-/** Ambil 1 order by sheet row index. */
 export async function getOrderByRowIndex(rowIndex: number): Promise<Order | null> {
-  const data = (await callGet({ action: "getOne", row: rowIndex })) as Order | null;
+  const data = (await callApi({ action: "getOne", row: rowIndex })) as Order | null;
   return data ?? null;
 }
 
-/** Tambah order baru. Return rowIndex baru. */
 export async function appendOrder(input: Partial<Order>): Promise<number> {
-  const data = (await callPost({ action: "append", data: input })) as { rowIndex: number };
+  const data = (await callApi({ action: "append", data: input })) as { rowIndex: number };
   return data.rowIndex;
 }
 
-/** Update order by rowIndex. */
 export async function updateOrder(rowIndex: number, input: Partial<Order>): Promise<boolean> {
-  const data = (await callPost({ action: "update", row: rowIndex, data: input })) as { ok: boolean };
+  const data = (await callApi({ action: "update", row: rowIndex, data: input })) as { ok: boolean };
   return data.ok === true;
 }
 
-/** Hapus order by rowIndex. */
 export async function deleteOrder(rowIndex: number): Promise<boolean> {
-  const data = (await callPost({ action: "delete", row: rowIndex })) as { ok: boolean };
+  const data = (await callApi({ action: "delete", row: rowIndex })) as { ok: boolean };
   return data.ok === true;
 }
 
-/** Ambil nilai unik untuk autocomplete. */
 export async function getUniqueValues(): Promise<{
   event: string[];
   brand: string[];
   artikel: string[];
   metode_pembayaran: string[];
 }> {
-  const data = (await callGet({ action: "unique" })) as {
+  const data = (await callApi({ action: "unique" })) as {
     event: string[];
     brand: string[];
     artikel: string[];
@@ -124,7 +104,6 @@ export async function getUniqueValues(): Promise<{
   return data ?? { event: [], brand: [], artikel: [], metode_pembayaran: [] };
 }
 
-/** Buat option label untuk dropdown pilih order. */
 export function toOrderOptions(orders: Order[]): OrderOption[] {
   return orders.map((o) => ({
     id: o.sheetRowIndex,
