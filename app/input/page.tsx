@@ -4,10 +4,10 @@ export const dynamic = "force-dynamic";
 
 import Navbar from "@/components/Navbar";
 import OrderForm from "@/components/OrderForm";
-import { getSuggestions } from "@/lib/orders";
+import { getUniqueValues } from "@/lib/sheets";
 
 export default async function InputPage() {
-  const suggestions = await getSuggestions();
+  const suggestions = await getUniqueValues();
   return (
     <div className="min-h-screen">
       <Navbar />

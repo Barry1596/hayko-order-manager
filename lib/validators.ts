@@ -42,19 +42,6 @@ export const orderInputSchema = z.object({
 
 export type OrderInputSchema = z.infer<typeof orderInputSchema>;
 
-/** Schema untuk POST /api/register. */
-export const registerSchema = z.object({
-  username: z
-    .string()
-    .min(3, "Username minimal 3 karakter")
-    .max(50)
-    .regex(/^[a-zA-Z0-9_.-]+$/, "Username hanya boleh huruf, angka, titik, strip, underscore"),
-  password: z.string().min(6, "Password minimal 6 karakter").max(100),
-  nama: z.string().min(1, "Nama wajib diisi").max(100),
-});
-
-export type RegisterSchema = z.infer<typeof registerSchema>;
-
 /** Schema untuk login (Credentials Provider). */
 export const loginSchema = z.object({
   username: z.string().min(1),

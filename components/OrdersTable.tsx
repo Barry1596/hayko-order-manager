@@ -1,8 +1,8 @@
 "use client";
 
 // ===== OrdersTable — tabel rekap + filter + pagination =====
-// Kolom "No" TIDAK ditampilkan (lihat spec Section 4 & 6.3).
-// Klik baris → redirect ke /edit/[id].
+// Kolom "No" (kolom A sheet) TIDAK ditampilkan.
+// Tombol Edit → /edit/[rowIndex] (rowIndex = baris asli di sheet).
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
@@ -112,7 +112,7 @@ export default function OrdersTable({ orders, events }: Props) {
               </tr>
             ) : (
               slice.map((o) => (
-                <tr key={o.id} className="border-t border-slate-100 hover:bg-brand-light">
+                <tr key={o.sheetRowIndex} className="border-t border-slate-100 hover:bg-brand-light">
                   <td className="px-3 py-2">{o.event}</td>
                   <td className="px-3 py-2 font-medium">{o.nama}</td>
                   <td className="px-3 py-2 text-brand-slate">
@@ -128,7 +128,7 @@ export default function OrdersTable({ orders, events }: Props) {
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <Link
-                      href={`/edit/${o.id}`}
+                      href={`/edit/${o.sheetRowIndex}`}
                       className="rounded bg-brand-blue px-2 py-1 text-xs font-medium text-white hover:bg-brand-navy"
                     >
                       Edit

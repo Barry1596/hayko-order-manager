@@ -1,46 +1,30 @@
 // ===== Type definitions untuk Hayko Order Manager =====
+// Arsitektur: data tersimpan di Google Sheets via Apps Script.
+// Identifikasi baris pakai `sheetRowIndex` (nomor baris asli di sheet, 1-based).
 
-/** User admin (sesuai tabel `users` di Postgres). */
-export interface User {
-  id: number;
-  username: string;
-  password_hash: string;
-  nama: string;
-  created_at?: string;
-}
-
-/** Versi aman user (tanpa hash) untuk dikirim ke client / disimpan di session. */
-export interface SafeUser {
-  id: number;
-  username: string;
-  nama: string;
-}
-
-/** Satu baris pesanan (sesuai tabel `orders` di Postgres). */
+/** Order (1 baris di tab "Rekap Pesanan"). */
 export interface Order {
-  id: number;
-  event: string;
-  nama: string;
-  brand: string | null;
-  artikel: string | null;
-  warna_tipe: string | null;
-  ukuran: string | null;
-  jumlah: number;
-  harga_cust: number;
-  harga_asli: number | null;
-  profit: number | null;
-  fee: number;
-  add_fee: number;
-  total_fee: number;
-  status_pesanan: string;
-  status_pembayaran: string;
-  metode_pembayaran: string | null;
-  ditalangi_oleh: string | null;
-  fee_override: boolean;
-  add_fee_override: boolean;
-  created_by: string | null;
-  created_at?: string;
-  updated_at?: string;
+  sheetRowIndex: number; // nomor baris asli di sheet (1-based, dipakai sebagai id)
+  no?: number | string;  // kolom A — internal, TIDAK ditampilkan ke user
+  event: string;         // B
+  nama: string;          // C
+  brand?: string;        // D
+  artikel?: string;      // E
+  warna_tipe?: string;   // F
+  ukuran?: string;       // G
+  jumlah: number;        // H
+  harga_cust: number;    // I
+  harga_asli?: number;   // J
+  profit?: number;       // K
+  fee: number;           // L
+  add_fee: number;       // M
+  total_fee: number;     // N
+  status_pesanan: string;     // O
+  status_pembayaran: string;  // P
+  metode_pembayaran?: string; // Q
+  ditalangi_oleh?: string;    // R
+  fee_override?: boolean;
+  add_fee_override?: boolean;
 }
 
 /** Payload create/update order dari form client. */
@@ -73,6 +57,12 @@ export interface AddFeeOptions {
 
 /** Dropdown option untuk pilih order di halaman Edit/Delete. */
 export interface OrderOption {
-  id: number;
+  id: number; // = sheetRowIndex
   label: string; // Format: "Event — Nama — Artikel (Rp85.000)"
+}
+
+/** User admin (dari env var). */
+export interface SafeUser {
+  username: string;
+  nama: string;
 }

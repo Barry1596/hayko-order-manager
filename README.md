@@ -1,14 +1,6 @@
 # Hayko Order Manager
 
-Web app **internal** untuk tim admin Jastip Hayko — form input, edit, dan rekapitulasi pesanan dengan **auto-calc Fee** sesuai aturan bisnis.
-
-> ⚠️ **Catatan arsitektur**: Awalnya dirancang untuk integrasi Google Sheets API (baca+tulis). Setelah diskusi, sumber data dipindah ke **Vercel Postgres** agar:
-> - Tidak perlu setup Google Service Account (ribet)
-> - Data pesanan tersimpan permanen & bisa diakses Hayfa + Kiko dari device mana saja
-> - Mendukung audit trail (siapa yang input/edit)
-> - CRUD lebih reliable daripada menulis ke baris Sheet
->
-> Fitur **export to Google Sheets** bisa ditambah nanti sebagai nice-to-have.
+Web app **internal** untuk tim admin Jastip Hayko — form input, edit, dan rekapitulasi pesanan dengan **auto-calc Fee**, terhubung langsung (baca+tulis) ke Google Sheets **"MASTER REKAP HAYKO"** via Google Apps Script.
 
 ---
 
@@ -18,98 +10,83 @@ Web app **internal** untuk tim admin Jastip Hayko — form input, edit, dan reka
 |---|---|
 | Framework | Next.js 14 (App Router) + TypeScript |
 | Styling | Tailwind CSS |
-| Database | Vercel Postgres (`@vercel/postgres`) |
-| Auth | NextAuth.js v4 (Credentials + bcrypt) |
+| Backend / DB | **Google Sheets** via **Google Apps Script Web App** |
+| Auth | NextAuth.js v4 (Credentials, users di env var) |
 | Hosting | Vercel |
+
+> Kenapa Apps Script? Tulis-ke-Sheet dari web app biasanya butuh Service Account Google Cloud (ribet setup). Apps Script jalan **di dalam** Sheet itu sendiri — sekali deploy, dapat URL API. Tidak perlu kredensial Google Cloud.
 
 ---
 
-## 🚀 Quick Start (Dev Lokal)
+## 🚀 Setup — 3 Tahap
 
-### 1. Install dependencies
+### Tahap 1: Deploy Apps Script Backend (di Google Sheet)
+
+1. Buka spreadsheet **"MASTER REKAP HAYKO"** di browser
+2. Menu: **Extensions → Apps Script**
+3. Hapus isi `Code.gs` default, **paste seluruh isi file [`apps-script/Code.gs`](apps-script/Code.gs)** dari repo ini
+4. **Save** (Ctrl+S), beri nama project "Hayko Backend"
+5. Klik **Deploy → New deployment**:
+   - Type: **Web app**
+   - Description: `Hayko API v1`
+   - Execute as: **Me** (email pemilik sheet)
+   - Who has access: **Anyone**
+   - → klik **Deploy**
+6. Authorize akses saat diminta (Advanced → Go to project → Allow)
+7. **Salin Web App URL** (format: `https://script.google.com/macros/s/XXXX/exec`)
+
+> Setiap update `Code.gs`, wajib re-deploy: Deploy → Manage deployments → Edit → Version: New version → Deploy. **URL tidak berubah**.
+
+### Tahap 2: Konfigurasi `.env.local`
+
+Buat file `.env.local` di root project (sudah di-gitignore):
+
+```bash
+# Apps Script URL (dari Tahap 1)
+SHEETS_API_URL=https://script.google.com/macros/s/XXXX/exec
+
+# Generate via: openssl rand -base64 32
+NEXTAUTH_SECRET=paste-output-openssl-disini
+NEXTAUTH_URL=http://localhost:3000
+
+# Daftar admin (JSON array)
+ADMIN_USERS=[{"username":"Hayfa","password":"hayko123","nama":"Hayfa"},{"username":"Kiko","password":"hayko123","nama":"Kiko"}]
+```
+
+### Tahap 3: Jalankan Dev Server
+
 ```bash
 npm install
-```
-
-### 2. Setup Vercel Postgres (gratis untuk hobby)
-1. Buka [vercel.com](https://vercel.com) → login → buat project baru (atau pakai yang ada)
-2. Tab **Storage** → **Create Database** → pilih **Postgres** → beri nama `hayko-db`
-3. Setelah dibuat, klik **Connect to Project** → pilih project Anda
-4. Salin `POSTGRES_URL` dari tab **.env.local** atau **Connect**
-
-### 3. Konfigurasi `.env.local`
-Buat file `.env.local` di root project (sudah di-gitignore):
-```bash
-POSTGRES_URL=postgres://...     # dari Vercel Postgres
-NEXTAUTH_SECRET=...             # generate via: openssl rand -base64 32
-NEXTAUTH_URL=http://localhost:3000
-```
-
-### 4. Jalankan migration + seed
-```bash
-npm run migrate
-```
-Ini akan membuat tabel `users` + `orders` dan seed 2 akun dummy:
-- **Hayfa** / `hayko123`
-- **Kiko** / `hayko123`
-
-### 5. Jalankan dev server
-```bash
 npm run dev
 ```
-Buka [http://localhost:3000](http://localhost:3000) → login pakai akun dummy di atas.
+
+Buka [http://localhost:3000](http://localhost:3000) → login `Hayfa` / `hayko123`.
 
 ---
 
 ## 📦 Deploy ke Vercel
 
-### Via Vercel CLI (rekomendasi)
-```bash
-# Login sekali
-vercel login
-
-# Link project
-vercel link
-
-# Set env vars di Vercel (production)
-vercel env add POSTGRES_URL
-vercel env add NEXTAUTH_SECRET
-vercel env add NEXTAUTH_URL
-
-# Deploy ke production
-vercel --prod
-```
-
-### Via Dashboard
-1. Push repo ke GitHub
-2. Buka [vercel.com/new](https://vercel.com/new) → import repo
-3. Tambah env vars yang sama di **Settings → Environment Variables**
+1. Push repo ke GitHub (sudah di-push ke `Barry1596/hayko-order-manager`)
+2. Buka [vercel.com/new](https://vercel.com/new) → import repo `hayko-order-manager`
+3. Di halaman import, tambah **Environment Variables** (lihat daftar di Tahap 2):
+   - `SHEETS_API_URL`
+   - `NEXTAUTH_SECRET` (generate baru via `openssl rand -base64 32`)
+   - `NEXTAUTH_URL` = `https://hayko-order-manager.vercel.app` (URL final Vercel)
+   - `ADMIN_USERS`
 4. Klik **Deploy**
 
-> **Penting**: Setelah deploy pertama, jalankan migration di database production:
-> ```bash
-> vercel env pull .env.local   # tarik POSTGRES_URL production
-> npm run migrate              # jalan ke DB production
-> ```
+Selesai. Tidak perlu migration, tidak perlu database setup — semua data tersimpan di Sheet yang sudah ada.
 
 ---
 
-## 🔑 Akun Default & Cara Ganti Password
+## 🔑 Login
 
-Setelah `npm run migrate`, 2 akun default tersedia:
-| Username | Password | Nama |
-|---|---|---|
-| `Hayfa` | `hayko123` | Hayfa |
-| `Kiko` | `hayko123` | Kiko |
+| Username | Password |
+|---|---|
+| `Hayfa` | `hayko123` |
+| `Kiko` | `hayko123` |
 
-**Ganti password**: Login → belum ada halaman change-password (TODO). Sementara, admin baru bisa didaftarkan via halaman `/register`, atau jalankan:
-```bash
-npm run hash-password -- passwordbaru
-```
-Lalu update langsung di database:
-```sql
-UPDATE users SET password_hash = '<hash-dari-output>' WHERE username = 'Hayfa';
-```
+Tambah admin baru: edit env var `ADMIN_USERS` (di `.env.local` atau Vercel dashboard), tambahkan object baru, redeploy/restart.
 
 ---
 
@@ -130,11 +107,11 @@ Logika ada di [`lib/feeRules.ts`](lib/feeRules.ts) — pure function, dipakai cl
 
 ### Add Fee (kolom M)
 - **Flashsale/bundling**: +3.000 (checkbox)
-- **Barang besar/berat/fragile**: +nominal manual 5.000–15.000 (input angka)
+- **Barang besar/berat/fragile**: +nominal manual 5.000–15.000
 - Keduanya bisa digabung
 
 ### Override manual
-Setiap field Fee & Add Fee punya toggle "Edit manual" — saat aktif, border berubah kuning & label "(manual)" muncul. Server tetap menyimpan nilai override tsb.
+Toggle "Edit manual" di field Fee & Add Fee → border kuning + label "(manual)". Server tetap simpan nilai override tsb.
 
 ---
 
@@ -142,51 +119,43 @@ Setiap field Fee & Add Fee punya toggle "Edit manual" — saat aktif, border ber
 
 ```
 hayko-order-manager/
+├── apps-script/
+│   └── Code.gs              # Backend Apps Script (paste ke Extensions → Apps Script)
 ├── app/
-│   ├── login/          # Sign In
-│   ├── register/       # Sign Up
-│   ├── input/          # Form tambah order
-│   ├── edit/[id]/      # Form edit (prefill)
-│   ├── rekap/          # Tabel + filter + hapus
+│   ├── login/               # Sign In
+│   ├── input/               # Form tambah order
+│   ├── edit/[rowIndex]/     # Form edit (prefill)
+│   ├── rekap/               # Tabel + filter + hapus
 │   └── api/
-│       ├── auth/       # NextAuth handler
-│       ├── register/   # POST daftar user baru
-│       └── orders/     # GET/POST/PUT/DELETE orders
-├── components/         # Navbar, OrderForm, dropdown, tabel, dll
-├── lib/                # feeRules, db, auth, validators, format
-├── db/                 # schema.sql, seed.sql
-├── scripts/            # migrate.ts, hash-password.ts
-├── types/              # TypeScript interfaces
-└── middleware.ts       # Protect route protected
+│       ├── auth/            # NextAuth handler
+│       └── orders/          # GET/POST/PUT/DELETE → Apps Script
+├── components/              # Navbar, OrderForm, dropdown, tabel, dll
+├── lib/
+│   ├── sheets.ts            # Client ke Apps Script
+│   ├── auth.ts              # NextAuth (users dari env var)
+│   ├── feeRules.ts          # Pure function perhitungan fee
+│   ├── format.ts            # formatRupiah dll
+│   └── validators.ts        # Zod schemas
+├── types/index.ts
+└── middleware.ts            # Protect route protected
 ```
 
 ---
 
 ## 🔐 Keamanan
 
-- Password di-hash **bcrypt** (cost 10) — tidak plaintext
 - Middleware proteksi `/input`, `/edit`, `/rekap`, `/api/orders`
 - Server re-calc Fee sebelum simpan (anti-manipulasi client)
-- Audit trail: kolom `created_by` diisi otomatis dari session admin
-- Semua kredensial di environment variable (tidak pernah di-commit)
+- Apps Script pakai token opsional (`SHEETS_API_TOKEN`) kalau mau dibatasi
+- Password plain-text di env var — trade-off untuk kemudahan (tool internal). Upgrade ke bcrypt kalau perlu.
 
 ---
 
 ## ⚠️ TODO — Perlu Konfirmasi Pemilik Bisnis
 
-3 asumsi yang dipakai di code sekarang, perlu diklarifikasi:
-
-1. **Aturan fee >600K** — saat ini pakai `MAX(25.000, 5%×harga)`. Konfirmasi: apakah "25K atau 5%, pilih yang lebih besar" atau logika lain? Ubah di `lib/feeRules.ts` → `FEE_ABOVE_600K`.
-2. **Harga Cust = total per-baris atau per-unit?** — saat ini diasumsikan **total per-baris**. Kalau per-unit, hitungan Fee perlu disesuaikan (Fee × Jumlah?).
-3. **Formula Profit & Total Fee** — saat ini Profit = Harga Cust − Harga Asli, Total Fee = Fee + Add Fee. Kalau di Sheet asli ada formula berbeda, replikasi di app.
-
----
-
-## 📝 Catatan
-
-- Fitur **export/sync ke Google Sheets** bisa ditambah nanti (gunakan service account, write-only).
-- Kolom **"No"** (nomor urut di Sheet asli) tidak ditampilkan di UI — identifikasi baris pakai `id` primary key database.
-- Searchable dropdown untuk Edit/Delete memastikan admin tidak salah pilih baris.
+1. **Aturan fee >600K** — saat ini `MAX(25.000, 5%×harga)`. Ubah di `lib/feeRules.ts` → `FEE_ABOVE_600K`.
+2. **Harga Cust = per-baris atau per-unit?** — diasumsikan total per-baris.
+3. **Formula Profit/Total Fee** — Profit = Harga Cust − Harga Asli, Total Fee = Fee + Add Fee.
 
 ---
 

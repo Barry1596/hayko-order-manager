@@ -1,11 +1,45 @@
-// ===== NextAuth options (Credentials Provider + bcrypt) =====
+// ===== NextAuth options (Credentials Provider, users di env var) =====
+//
+// Daftar admin disimpan di env var ADMIN_USERS sebagai JSON array:
+//   [{"username":"Hayfa","password":"hayko123","nama":"Hayfa"},
+//    {"username":"Kiko","password":"hayko123","nama":"Kiko"}]
+//
+// Catatan: password plain-text di env var. Karena ini tool internal & URL
+// publik memang diizinkan user, ini trade-off yang disengaja demi kemudahan
+// (tanpa setup database bcrypt). Kalau butuh security lebih, tinggal
+// tambahkan bcrypt compare di sini.
 
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
-import { query } from "@/lib/db";
 import { loginSchema } from "@/lib/validators";
 import type { SafeUser } from "@/types";
+
+interface AdminUser {
+  username: string;
+  password: string;
+  nama: string;
+}
+
+/** Parse daftar admin dari process.env.ADMIN_USERS. */
+function getAdmins(): AdminUser[] {
+  const raw = process.env.ADMIN_USERS;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (u): u is AdminUser =>
+        typeof u === "object" &&
+        u !== null &&
+        typeof u.username === "string" &&
+        typeof u.password === "string" &&
+        typeof u.nama === "string",
+    );
+  } catch {
+    console.error("[auth] ADMIN_USERS env var bukan JSON valid");
+    return [];
+  }
+}
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
@@ -23,17 +57,13 @@ export const authOptions: NextAuthOptions = {
         if (!parsed.success) return null;
 
         const { username, password } = parsed.data;
-        const rows = await query<{ id: number; username: string; password_hash: string; nama: string }>(
-          `SELECT id, username, password_hash, nama FROM users WHERE username = $1 LIMIT 1`,
-          [username],
+        const admins = getAdmins();
+        const found = admins.find(
+          (u) => u.username.toLowerCase() === username.toLowerCase(),
         );
-        const user = rows[0];
-        if (!user) return null;
+        if (!found || found.password !== password) return null;
 
-        const ok = await bcrypt.compare(password, user.password_hash);
-        if (!ok) return null;
-
-        const safe: SafeUser = { id: user.id, username: user.username, nama: user.nama };
+        const safe: SafeUser = { username: found.username, nama: found.nama };
         return safe as unknown as { id: string; name: string; username: string };
       },
     }),
@@ -41,9 +71,7 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        // user di sini = return value authorize (SafeUser yang di-cast)
         const u = user as unknown as SafeUser;
-        token.id = u.id;
         token.username = u.username;
         token.nama = u.nama;
       }
@@ -51,7 +79,6 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as SafeUser).id = token.id as number;
         (session.user as SafeUser).username = token.username as string;
         (session.user as SafeUser).nama = token.nama as string;
       }
@@ -60,11 +87,9 @@ export const authOptions: NextAuthOptions = {
   },
 };
 
-// Augment tipe NextAuth supaya token/session punya field username & nama.
 declare module "next-auth" {
   interface Session {
     user: {
-      id: number;
       username: string;
       nama: string;
     };
@@ -73,7 +98,6 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
-    id?: number;
     username?: string;
     nama?: string;
   }

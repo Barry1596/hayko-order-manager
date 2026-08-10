@@ -1,14 +1,20 @@
 // ===== GET /api/orders (list) + POST /api/orders (create) =====
+//
+// Data tersimpan di Google Sheets via Apps Script (lib/sheets.ts).
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { query } from "@/lib/db";
 import { authOptions } from "@/lib/auth";
 import { orderInputSchema } from "@/lib/validators";
-import { calcBaseFee, calcAddFee, calcTotalFee, calcProfit } from "@/lib/feeRules";
-import type { Order, OrderOption, SafeUser } from "@/types";
+import { calcBaseFee, calcTotalFee, calcProfit } from "@/lib/feeRules";
+import {
+  getAllOrders,
+  appendOrder,
+  getUniqueValues,
+} from "@/lib/sheets";
+import { toOrderOptions } from "@/lib/sheets";
 
-// ===== GET: ambil semua order (atau filter) =====
+// GET: ambil semua order (atau hanya options untuk dropdown)
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
@@ -16,56 +22,27 @@ export async function GET(req: Request) {
   }
 
   const { searchParams } = new URL(req.url);
-  const event = searchParams.get("event");
-  const nama = searchParams.get("nama");
-  const status = searchParams.get("status");
-
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (event) {
-    params.push(event);
-    conditions.push(`event = $${params.length}`);
-  }
-  if (nama) {
-    params.push(`%${nama}%`);
-    conditions.push(`nama ILIKE $${params.length}`);
-  }
-  if (status) {
-    params.push(status);
-    conditions.push(`status_pesanan = $${params.length}`);
-  }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-
-  const rows = await query<Order>(
-    `SELECT id, event, nama, brand, artikel, warna_tipe, ukuran, jumlah,
-            harga_cust, harga_asli, profit, fee, add_fee, total_fee,
-            status_pesanan, status_pembayaran, metode_pembayaran, ditalangi_oleh,
-            fee_override, add_fee_override, created_by, created_at, updated_at
-       FROM orders ${where}
-       ORDER BY created_at DESC, id DESC`,
-    params,
-  );
-
-  // Hanya kembalikan id internal untuk dropdown bila diminta via ?options=1
   const onlyOptions = searchParams.get("options") === "1";
-  if (onlyOptions) {
-    const opts: OrderOption[] = rows.map((r) => ({
-      id: r.id,
-      label: `${[r.event, r.nama, r.artikel].filter(Boolean).join(" — ")} (Rp${new Intl.NumberFormat("id-ID").format(Number(r.harga_cust))})`,
-    }));
-    return NextResponse.json(opts);
+  const onlyUnique = searchParams.get("unique") === "1";
+
+  if (onlyUnique) {
+    const unique = await getUniqueValues();
+    return NextResponse.json(unique);
   }
 
-  return NextResponse.json(rows);
+  const orders = await getAllOrders();
+  if (onlyOptions) {
+    return NextResponse.json(toOrderOptions(orders));
+  }
+  return NextResponse.json(orders);
 }
 
-// ===== POST: tambah order baru =====
+// POST: tambah order baru
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const admin = session.user as SafeUser;
 
   try {
     const body = await req.json();
@@ -78,57 +55,40 @@ export async function POST(req: Request) {
     }
     const input = parsed.data;
 
-    // Re-calc fee di server (anti-manipulasi client), KECUALI admin override aktif.
+    // Re-calc fee di server (anti-manipulasi client)
     let fee = input.fee;
-    let addFee = input.add_fee;
     if (!input.fee_override) {
       fee = calcBaseFee(Number(input.harga_cust));
     }
-    if (!input.add_fee_override) {
-      addFee = calcAddFee({
-        flashsale: false,
-        barangBesar: false,
-        barangBesarNominal: 0,
-      });
-    }
-    const totalFee = calcTotalFee(fee, addFee);
+    const totalFee = calcTotalFee(fee, input.add_fee);
     const profit = calcProfit(Number(input.harga_cust), input.harga_asli);
 
-    const rows = await query<{ id: number }>(
-      `INSERT INTO orders (
-         event, nama, brand, artikel, warna_tipe, ukuran, jumlah,
-         harga_cust, harga_asli, profit, fee, add_fee, total_fee,
-         status_pesanan, status_pembayaran, metode_pembayaran, ditalangi_oleh,
-         fee_override, add_fee_override, created_by, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW())
-       RETURNING id`,
-      [
-        input.event,
-        input.nama,
-        input.brand ?? null,
-        input.artikel ?? null,
-        input.warna_tipe ?? null,
-        input.ukuran ?? null,
-        input.jumlah,
-        Number(input.harga_cust),
-        input.harga_asli != null ? Number(input.harga_asli) : null,
-        profit,
-        fee,
-        addFee,
-        totalFee,
-        input.status_pesanan,
-        input.status_pembayaran,
-        input.metode_pembayaran ?? null,
-        input.ditalangi_oleh ?? null,
-        input.fee_override,
-        input.add_fee_override,
-        admin.nama,
-      ],
-    );
+    const rowIndex = await appendOrder({
+      event: input.event,
+      nama: input.nama,
+      brand: input.brand ?? "",
+      artikel: input.artikel ?? "",
+      warna_tipe: input.warna_tipe ?? "",
+      ukuran: input.ukuran ?? "",
+      jumlah: input.jumlah,
+      harga_cust: Number(input.harga_cust),
+      harga_asli: input.harga_asli != null ? Number(input.harga_asli) : undefined,
+      profit: profit ?? 0,
+      fee,
+      add_fee: input.add_fee,
+      total_fee: totalFee,
+      status_pesanan: input.status_pesanan,
+      status_pembayaran: input.status_pembayaran,
+      metode_pembayaran: input.metode_pembayaran ?? "",
+      ditalangi_oleh: input.ditalangi_oleh ?? "",
+      fee_override: input.fee_override,
+      add_fee_override: input.add_fee_override,
+    });
 
-    return NextResponse.json({ id: rows[0].id }, { status: 201 });
+    return NextResponse.json({ rowIndex }, { status: 201 });
   } catch (err) {
     console.error("[orders POST] error:", err);
-    return NextResponse.json({ error: "Gagal menyimpan order" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : "Gagal menyimpan order";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

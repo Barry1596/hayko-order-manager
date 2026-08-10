@@ -37,7 +37,7 @@ interface Props {
     event: string[];
     brand: string[];
     artikel: string[];
-    metodePembayaran: string[];
+    metode_pembayaran: string[];
   };
   submitUrl: string;
   method: "POST" | "PUT";
@@ -396,7 +396,7 @@ export default function OrderForm({ initial, suggestions, submitUrl, method }: P
             label="Metode Pembayaran"
             value={form.metode_pembayaran}
             onChange={(v) => setField("metode_pembayaran", v)}
-            options={suggestions.metodePembayaran}
+            options={suggestions.metode_pembayaran}
           />
           <div>
             <label className="block text-sm font-medium text-brand-slate mb-1">Ditalangi oleh</label>

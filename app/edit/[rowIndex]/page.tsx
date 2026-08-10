@@ -1,28 +1,25 @@
-// ===== /edit/[id] — Form edit order existing (protected) =====
+// ===== /edit/[rowIndex] — Form edit order existing (protected) =====
 
 export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import OrderForm from "@/components/OrderForm";
-import { query } from "@/lib/db";
-import { getSuggestions } from "@/lib/orders";
-import type { Order } from "@/types";
+import { getOrderByRowIndex, getUniqueValues } from "@/lib/sheets";
 
 interface PageProps {
-  params: { id: string };
+  params: { rowIndex: string };
 }
 
 export default async function EditPage({ params }: PageProps) {
-  const id = Number(params.id);
-  if (!Number.isFinite(id)) notFound();
+  const rowIndex = Number(params.rowIndex);
+  if (!Number.isFinite(rowIndex)) notFound();
 
-  const [orderRows, suggestions] = await Promise.all([
-    query<Order>(`SELECT * FROM orders WHERE id = $1`, [id]),
-    getSuggestions(),
+  const [order, suggestions] = await Promise.all([
+    getOrderByRowIndex(rowIndex),
+    getUniqueValues(),
   ]);
-  if (orderRows.length === 0) notFound();
-  const order = orderRows[0];
+  if (!order) notFound();
 
   return (
     <div className="min-h-screen">
@@ -34,7 +31,7 @@ export default async function EditPage({ params }: PageProps) {
         <OrderForm
           initial={order}
           suggestions={suggestions}
-          submitUrl={`/api/orders/${order.id}`}
+          submitUrl={`/api/orders/${order.sheetRowIndex}`}
           method="PUT"
         />
       </main>

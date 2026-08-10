@@ -1,7 +1,8 @@
 "use client";
 
 // ===== DeleteOrder — panel pilih order via dropdown + preview + konfirmasi hapus =====
-// Implementasi spec Section 6.4: wajib pilih dari data existing, preview sebelum hapus.
+// Spec Section 6.4: wajib pilih dari data existing, preview sebelum hapus.
+// Identifikasi baris pakai sheetRowIndex (bukan kolom "No").
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -11,20 +12,20 @@ import { formatRupiah } from "@/lib/format";
 
 export default function DeleteOrder({ options }: { options: OrderOption[] }) {
   const router = useRouter();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
   const [preview, setPreview] = useState<Order | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
 
-  async function onSelect(id: number) {
-    setSelectedId(id);
+  async function onSelect(rowIndex: number) {
+    setSelectedRowIndex(rowIndex);
     setPreview(null);
     setError(null);
     setConfirming(false);
     setLoading(true);
     try {
-      const res = await fetch(`/api/orders/${id}`);
+      const res = await fetch(`/api/orders/${rowIndex}`);
       if (!res.ok) throw new Error("Gagal ambil data");
       const j: Order = await res.json();
       setPreview(j);
@@ -36,18 +37,18 @@ export default function DeleteOrder({ options }: { options: OrderOption[] }) {
   }
 
   async function doDelete() {
-    if (selectedId == null) return;
+    if (selectedRowIndex == null) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/orders/${selectedId}`, { method: "DELETE" });
+      const res = await fetch(`/api/orders/${selectedRowIndex}`, { method: "DELETE" });
       if (!res.ok) {
         const j = await res.json().catch(() => null);
         throw new Error(j?.error ?? "Gagal menghapus");
       }
       router.refresh();
       setPreview(null);
-      setSelectedId(null);
+      setSelectedRowIndex(null);
       setConfirming(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Terjadi error");

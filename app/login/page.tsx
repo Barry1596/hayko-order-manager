@@ -4,7 +4,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { signIn } from "next-auth/react";
 
 export default function LoginPage() {
@@ -77,18 +76,11 @@ export default function LoginPage() {
           >
             {loading ? "Memproses..." : "Masuk"}
           </button>
-
-          <div className="text-center text-sm text-brand-slate">
-            Belum punya akun?{" "}
-            <Link href="/register" className="text-brand-blue font-medium hover:underline">
-              Daftar di sini
-            </Link>
-          </div>
         </form>
 
         <p className="text-center text-xs text-brand-slate mt-4">
-          Demo: username <code className="bg-white px-1 rounded">Hayfa</code> /{" "}
-          <code className="bg-white px-1 rounded">Kiko</code>, password{" "}
+          Login: <code className="bg-white px-1 rounded">Hayfa</code> /{" "}
+          <code className="bg-white px-1 rounded">Kiko</code> — password{" "}
           <code className="bg-white px-1 rounded">hayko123</code>
         </p>
       </div>
