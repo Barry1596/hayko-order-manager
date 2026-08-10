@@ -7,17 +7,18 @@
  * ENDPOINTS (GET):
  *   ?action=getAll                              → semua order
  *   ?action=getOne&row=3                        → 1 order by rowIndex
- *   ?action=append&data=URL_ENCODED_JSON        → tambah order baru
- *   ?action=update&row=3&data=URL_ENCODED_JSON  → update order
+ *   ?action=append&event=...&nama=...&...       → tambah order (field per param)
+ *   ?action=update&row=3&event=...&nama=...&... → update order
  *   ?action=delete&row=3                        → hapus order
  *   ?action=unique                              → nilai unik autocomplete
  *
- * Payload data untuk append/update: object JSON yang di-URL-encode.
- * Apps Script otomatis decode parameter, lalu JSON.parse isinya.
+ * Penting: untuk append/update, kirim SETIAP field sebagai parameter URL
+ * individual (event=X&nama=Y&harga_cust=Z), BUKAN JSON di param "data".
+ * Google memblokir parameter "data" berisi JSON (dianggap konten sensitif).
  *
  * --- CARA INSTALL (STANDALONE) ---
  * 1. https://script.google.com/home/projects/create → paste kode ini.
- * 2. Ganti SHEET_ID dengan ID spreadsheet Anda (bagian /d/<ID>/edit).
+ * 2. Ganti SHEET_ID dengan ID spreadsheet Anda.
  * 3. Save (Ctrl+S) → beri nama "Hayko Backend".
  * 4. Deploy → New deployment → Type: Web app
  *      Execute as: Me | Who has access: Anyone → Deploy.
@@ -164,6 +165,37 @@ function getUniqueValues() {
   };
 }
 
+/** Ambil field order dari parameter URL individual.
+ *  Field numerik di-coerce ke number, sisanya string. */
+function extractOrderFromParams(params) {
+  const str = (k) => params[k] !== undefined && params[k] !== '' ? params[k] : '';
+  const num = (k) => {
+    const v = params[k];
+    if (v === undefined || v === '' ) return '';
+    const n = Number(v);
+    return isNaN(n) ? '' : n;
+  };
+  return {
+    event: str('event'),
+    nama: str('nama'),
+    brand: str('brand'),
+    artikel: str('artikel'),
+    warna_tipe: str('warna_tipe'),
+    ukuran: str('ukuran'),
+    jumlah: num('jumlah'),
+    harga_cust: num('harga_cust'),
+    harga_asli: num('harga_asli'),
+    profit: num('profit'),
+    fee: num('fee'),
+    add_fee: num('add_fee'),
+    total_fee: num('total_fee'),
+    status_pesanan: str('status_pesanan'),
+    status_pembayaran: str('status_pembayaran'),
+    metode_pembayaran: str('metode_pembayaran'),
+    ditalangi_oleh: str('ditalangi_oleh'),
+  };
+}
+
 /** ===== HTTP ENTRY (GET only) ===== */
 
 function doGet(e) {
@@ -184,14 +216,14 @@ function doGet(e) {
         break;
       }
       case 'append': {
-        const data = JSON.parse(params.data || '{}');
+        const data = extractOrderFromParams(params);
         result = { rowIndex: appendOrder(data) };
         status = 201;
         break;
       }
       case 'update': {
         const row = Number(params.row);
-        const data = JSON.parse(params.data || '{}');
+        const data = extractOrderFromParams(params);
         result = updateOrder(row, data);
         break;
       }
