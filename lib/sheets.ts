@@ -1,13 +1,8 @@
 // ===== Sheets API client — call Apps Script Web App =====
 //
-// Apps Script Web App punya keterbatasan HTTP method:
-//   - GET  bisa via URL params
-//   - POST bisa via body
-//   - PUT/DELETE di-redirect ke GET oleh Google (302) → tidak reliable.
-//
-// Solusi: kita pakai POST untuk SEMUA operasi, dengan field `method` di body
-// untuk membedakan aksi (get/getAll/update/delete/append).
-// Apps Script akan dispatch berdasarkan body.method.
+// Apps Script Web App paling reliable via GET (POST sering diabaikan / 411).
+// Jadi SEMUA operasi (baca/tulis/update/delete) pakai GET dengan parameter URL.
+// Payload besar (data order) di-encode sebagai JSON di query string ?data=...
 
 import type { Order, OrderOption } from "@/types";
 
@@ -27,21 +22,24 @@ function token(): string {
   return process.env.SHEETS_API_TOKEN || "";
 }
 
-/** Raw call ke Apps Script. Selalu POST. */
-async function callApi(payload: Record<string, unknown>): Promise<unknown> {
-  const url = baseUrl();
-  const body: Record<string, unknown> = { ...payload };
+/**
+ * Raw call ke Apps Script. Selalu GET.
+ * Params dikirim sebagai query string.
+ */
+async function callApi(params: Record<string, string | number | undefined>): Promise<unknown> {
+  const url = new URL(baseUrl());
   const t = token();
-  if (t) body.token = t;
+  if (t) url.searchParams.set("token", t);
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+  }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    // Apps Script sering redirect; ikuti redirect.
+  const res = await fetch(url.toString(), {
+    method: "GET",
     redirect: "follow",
-    // Cache: tidak pernah cache hasil API.
     cache: "no-store",
+    // Apps Script kadang lambat di cold start.
+    next: { revalidate: 0 },
   });
 
   if (!res.ok) {
@@ -60,31 +58,38 @@ async function callApi(payload: Record<string, unknown>): Promise<unknown> {
 
 /** Ambil semua order. */
 export async function getAllOrders(): Promise<Order[]> {
-  const data = (await callApi({ method: "getAll" })) as Order[];
+  const data = (await callApi({ action: "getAll" })) as Order[];
   return Array.isArray(data) ? data : [];
 }
 
 /** Ambil 1 order by sheet row index. */
 export async function getOrderByRowIndex(rowIndex: number): Promise<Order | null> {
-  const data = (await callApi({ method: "getOne", rowIndex })) as Order | null;
+  const data = (await callApi({ action: "getOne", row: rowIndex })) as Order | null;
   return data ?? null;
 }
 
 /** Tambah order baru. Return rowIndex baru. */
 export async function appendOrder(input: Partial<Order>): Promise<number> {
-  const data = (await callApi({ method: "append", data: input })) as { rowIndex: number };
+  const data = (await callApi({
+    action: "append",
+    data: JSON.stringify(input),
+  })) as { rowIndex: number };
   return data.rowIndex;
 }
 
 /** Update order by rowIndex. */
 export async function updateOrder(rowIndex: number, input: Partial<Order>): Promise<boolean> {
-  const data = (await callApi({ method: "update", rowIndex, data: input })) as { ok: boolean };
+  const data = (await callApi({
+    action: "update",
+    row: rowIndex,
+    data: JSON.stringify(input),
+  })) as { ok: boolean };
   return data.ok === true;
 }
 
 /** Hapus order by rowIndex. */
 export async function deleteOrder(rowIndex: number): Promise<boolean> {
-  const data = (await callApi({ method: "delete", rowIndex })) as { ok: boolean };
+  const data = (await callApi({ action: "delete", row: rowIndex })) as { ok: boolean };
   return data.ok === true;
 }
 
@@ -95,7 +100,7 @@ export async function getUniqueValues(): Promise<{
   artikel: string[];
   metode_pembayaran: string[];
 }> {
-  const data = (await callApi({ method: "unique" })) as {
+  const data = (await callApi({ action: "unique" })) as {
     event: string[];
     brand: string[];
     artikel: string[];

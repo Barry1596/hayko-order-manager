@@ -5,6 +5,9 @@
  * (atau sheet dummy testing) via SpreadsheetApp.openById().
  * Bisa di-deploy sebagai STANDALONE project (tidak harus bound ke sheet).
  *
+ * Semua operasi (baca/tulis/update/delete) dilakukan via GET request
+ * dengan parameter URL — Apps Script Web App paling reliable via GET.
+ *
  * --- CARA INSTALL (STANDALONE) ---
  * 1. Buka https://script.google.com/home/projects/create (editor kosong).
  * 2. Hapus isi Code.gs default, paste seluruh isi file ini.
@@ -24,6 +27,14 @@
  * --- SETELAH UPDATE SCRIPT ---
  * Setiap perubahan WAJIB re-deploy: Deploy → Manage deployments → Edit →
  * Version: New version → Deploy. URL TIDAK berubah.
+ *
+ * --- API ENDPOINTS (GET) ---
+ *   ?action=getAll                 → semua order
+ *   ?action=getOne&row=3           → 1 order by rowIndex
+ *   ?action=append&data={...}      → tambah order baru (JSON-encoded)
+ *   ?action=update&row=3&data={...}→ update order
+ *   ?action=delete&row=3           → hapus order
+ *   ?action=unique                 → nilai unik untuk autocomplete
  */
 
 /** === KONFIGURASI === */
@@ -40,8 +51,7 @@ function getToken() {
   return PropertiesService.getScriptProperties().getProperty('APP_TOKEN') || '';
 }
 
-/** Sheet aktif (cache per-request).
- *  Pakai openById karena script standalone (tidak bound ke sheet). */
+/** Sheet aktif. Pakai openById karena script standalone. */
 function getSheet() {
   return SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
 }
@@ -75,12 +85,11 @@ function rowToObject(row, sheetRowIndex) {
   for (let i = 0; i < FIELDS.length; i++) {
     obj[FIELDS[i]] = row[i] !== undefined ? row[i] : '';
   }
-  // sheetRowIndex = baris asli di sheet (1-based). Dipakai sebagai id untuk update/delete.
   obj.sheetRowIndex = sheetRowIndex;
   return obj;
 }
 
-/** Ambil semua order (GET). */
+/** Ambil semua order. */
 function getAllOrders() {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -90,7 +99,6 @@ function getAllOrders() {
   const result = [];
   for (let i = 0; i < values.length; i++) {
     const obj = rowToObject(values[i], DATA_START_ROW + i);
-    // Skip baris kosong total (semua cell kosong)
     if (obj && (obj.event || obj.nama)) {
       result.push(obj);
     }
@@ -98,7 +106,7 @@ function getAllOrders() {
   return result;
 }
 
-/** Ambil 1 order by sheet row index (GET). */
+/** Ambil 1 order by sheet row index. */
 function getOrderByRowIndex(rowIndex) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -107,7 +115,7 @@ function getOrderByRowIndex(rowIndex) {
   return rowToObject(row, rowIndex);
 }
 
-/** Tambah order baru (POST). Return rowIndex baru. */
+/** Tambah order baru. Return rowIndex baru. */
 function appendOrder(data) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -116,7 +124,6 @@ function appendOrder(data) {
   let nextNo = 1;
   if (lastRow >= DATA_START_ROW) {
     const colA = sheet.getRange(DATA_START_ROW, 1, lastRow - HEADER_ROWS, 1).getValues();
-    // Ambil No dari baris terakhir yang punya data
     for (let i = colA.length - 1; i >= 0; i--) {
       if (colA[i][0] !== '' && colA[i][0] !== null) {
         nextNo = Number(colA[i][0]) + 1;
@@ -126,42 +133,7 @@ function appendOrder(data) {
   }
 
   const newRow = [
-    nextNo,                                                   // A: No (auto)
-    data.event || '',                                        // B
-    data.nama || '',                                         // C
-    data.brand || '',                                        // D
-    data.artikel || '',                                      // E
-    data.warna_tipe || '',                                   // F
-    data.ukuran || '',                                       // G
-    Number(data.jumlah) || 1,                                // H
-    Number(data.harga_cust) || 0,                           // I
-    data.harga_asli !== undefined && data.harga_asli !== null ? Number(data.harga_asli) : '', // J
-    Number(data.profit) || 0,                               // K
-    Number(data.fee) || 0,                                  // L
-    Number(data.add_fee) || 0,                              // M
-    Number(data.total_fee) || 0,                            // N
-    data.status_pesanan || 'Fix Order',                     // O
-    data.status_pembayaran || 'Not Yet',                    // P
-    data.metode_pembayaran || '',                           // Q
-    data.ditalangi_oleh || '',                              // R
-  ];
-
-  const targetRow = lastRow + 1;
-  sheet.getRange(targetRow, 1, 1, NUM_COLUMNS).setValues([newRow]);
-  // Format angka kolom H, I, J, K, L, M, N
-  sheet.getRange(targetRow, 8, 1, 7).setNumberFormat('#,##0');
-  return targetRow;
-}
-
-/** Update order berdasarkan sheet row index (PUT). */
-function updateOrder(rowIndex, data) {
-  const sheet = getSheet();
-  const lastRow = sheet.getLastRow();
-  if (rowIndex < DATA_START_ROW || rowIndex > lastRow) {
-    return { ok: false, error: 'Row index di luar rentang data' };
-  }
-  const updatedRow = [
-    '', // A: No (dipertahankan, tidak diubah)
+    nextNo,
     data.event || '',
     data.nama || '',
     data.brand || '',
@@ -170,7 +142,7 @@ function updateOrder(rowIndex, data) {
     data.ukuran || '',
     Number(data.jumlah) || 1,
     Number(data.harga_cust) || 0,
-    data.harga_asli !== undefined && data.harga_asli !== null ? Number(data.harga_asli) : '',
+    data.harga_asli !== undefined && data.harga_asli !== null && data.harga_asli !== '' ? Number(data.harga_asli) : '',
     Number(data.profit) || 0,
     Number(data.fee) || 0,
     Number(data.add_fee) || 0,
@@ -180,16 +152,48 @@ function updateOrder(rowIndex, data) {
     data.metode_pembayaran || '',
     data.ditalangi_oleh || '',
   ];
+
+  const targetRow = lastRow + 1;
+  sheet.getRange(targetRow, 1, 1, NUM_COLUMNS).setValues([newRow]);
+  sheet.getRange(targetRow, 8, 1, 7).setNumberFormat('#,##0');
+  return targetRow;
+}
+
+/** Update order berdasarkan sheet row index. */
+function updateOrder(rowIndex, data) {
+  const sheet = getSheet();
+  const lastRow = sheet.getLastRow();
+  if (rowIndex < DATA_START_ROW || rowIndex > lastRow) {
+    return { ok: false, error: 'Row index di luar rentang data' };
+  }
   const range = sheet.getRange(rowIndex, 1, 1, NUM_COLUMNS);
-  // Pertahankan kolom A (No) yang sudah ada
   const existingNo = range.getValues()[0][0];
-  updatedRow[0] = existingNo;
+  const updatedRow = [
+    existingNo, // A: No dipertahankan
+    data.event || '',
+    data.nama || '',
+    data.brand || '',
+    data.artikel || '',
+    data.warna_tipe || '',
+    data.ukuran || '',
+    Number(data.jumlah) || 1,
+    Number(data.harga_cust) || 0,
+    data.harga_asli !== undefined && data.harga_asli !== null && data.harga_asli !== '' ? Number(data.harga_asli) : '',
+    Number(data.profit) || 0,
+    Number(data.fee) || 0,
+    Number(data.add_fee) || 0,
+    Number(data.total_fee) || 0,
+    data.status_pesanan || 'Fix Order',
+    data.status_pembayaran || 'Not Yet',
+    data.metode_pembayaran || '',
+    data.ditalangi_oleh || '',
+  ];
   range.setValues([updatedRow]);
   range.offset(0, 7, 1, 7).setNumberFormat('#,##0');
   return { ok: true, rowIndex: rowIndex };
 }
 
-/** Hapus order berdasarkan sheet row index (DELETE). */
+/** Hapus order berdasarkan sheet row index. */
 function deleteOrder(rowIndex) {
   const sheet = getSheet();
   const lastRow = sheet.getLastRow();
@@ -200,7 +204,7 @@ function deleteOrder(rowIndex) {
   return { ok: true, rowIndex: rowIndex };
 }
 
-/** Ambil nilai unik untuk autocomplete (GET ?unique=1). */
+/** Ambil nilai unik untuk autocomplete. */
 function getUniqueValues() {
   const orders = getAllOrders();
   const pick = (field) => {
@@ -221,26 +225,9 @@ function getUniqueValues() {
   };
 }
 
-/** ===== HTTP ENTRY POINTS (Web App) ===== */
+/** ===== HTTP ENTRY POINT (GET only) ===== */
 
 function doGet(e) {
-  return handleRequest('GET', e);
-}
-
-function doPost(e) {
-  return handleRequest('POST', e);
-}
-
-function doPut(e) {
-  return handleRequest('PUT', e);
-}
-
-function doDelete(e) {
-  return handleRequest('DELETE', e);
-}
-
-/** Router utama. */
-function handleRequest(method, e) {
   let result;
   let status = 200;
   try {
@@ -254,29 +241,41 @@ function handleRequest(method, e) {
     }
 
     const params = (e && e.parameter) || {};
-    const path = params.path || '';
-    const body = parseBody(e);
+    const action = params.action || 'getAll';
 
-    // Routing
-    if (method === 'GET' && params.unique === '1') {
-      result = getUniqueValues();
-    } else if (method === 'GET' && params.row) {
-      result = getOrderByRowIndex(Number(params.row));
-      if (!result) { result = { error: 'Order tidak ditemukan' }; status = 404; }
-    } else if (method === 'GET') {
-      result = getAllOrders();
-    } else if (method === 'POST') {
-      result = { rowIndex: appendOrder(body) };
-      status = 201;
-    } else if (method === 'PUT') {
-      const rowIndex = Number(params.row || body.rowIndex);
-      result = updateOrder(rowIndex, body);
-    } else if (method === 'DELETE') {
-      const rowIndex = Number(params.row || body.rowIndex);
-      result = deleteOrder(rowIndex);
-    } else {
-      result = { error: 'Method tidak dikenal' };
-      status = 400;
+    switch (action) {
+      case 'getAll':
+        result = getAllOrders();
+        break;
+      case 'getOne': {
+        const row = Number(params.row);
+        result = getOrderByRowIndex(row);
+        if (!result) { result = { error: 'Order tidak ditemukan' }; status = 404; }
+        break;
+      }
+      case 'append': {
+        const data = JSON.parse(params.data || '{}');
+        result = { rowIndex: appendOrder(data) };
+        status = 201;
+        break;
+      }
+      case 'update': {
+        const row = Number(params.row);
+        const data = JSON.parse(params.data || '{}');
+        result = updateOrder(row, data);
+        break;
+      }
+      case 'delete': {
+        const row = Number(params.row);
+        result = deleteOrder(row);
+        break;
+      }
+      case 'unique':
+        result = getUniqueValues();
+        break;
+      default:
+        result = { error: 'Action tidak dikenal: ' + action };
+        status = 400;
     }
   } catch (err) {
     result = { error: String(err) };
@@ -285,17 +284,7 @@ function handleRequest(method, e) {
   return jsonOut(result, status);
 }
 
-/** Parse body JSON dari POST/PUT/DELETE. */
-function parseBody(e) {
-  if (!e || !e.postData || !e.postData.contents) return {};
-  try {
-    return JSON.parse(e.postData.contents);
-  } catch (err) {
-    return {};
-  }
-}
-
-/** Output JSON dengan CORS header (supaya bisa dipanggil dari domain lain). */
+/** Output JSON. */
 function jsonOut(obj, status) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
