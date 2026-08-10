@@ -1,33 +1,33 @@
 /**
  * ===== Hayko Order Manager — Google Apps Script Backend =====
  *
- * Script ini jalan DI DALAM Google Sheet "MASTER REKAP HAYKO".
- * Fungsinya: menyediakan Web App API (URL) untuk CRUD data di tab
- * "Rekap Pesanan", sehingga app Next.js bisa baca/tulis/hapus/edit
- * tanpa Service Account Google Cloud.
+ * Script ini berkomunikasi dengan Google Sheet "MASTER REKAP HAYKO"
+ * (atau sheet dummy testing) via SpreadsheetApp.openById().
+ * Bisa di-deploy sebagai STANDALONE project (tidak harus bound ke sheet).
  *
- * --- CARA INSTALL ---
- * 1. Buka spreadsheet "MASTER REKAP HAYKO" di browser.
- * 2. Menu: Extensions → Apps Script.
- * 3. Hapus isi Code.gs default, paste seluruh isi file ini.
- * 4. Klik Save ( Ctrl+S ), beri nama project "Hayko Backend".
+ * --- CARA INSTALL (STANDALONE) ---
+ * 1. Buka https://script.google.com/home/projects/create (editor kosong).
+ * 2. Hapus isi Code.gs default, paste seluruh isi file ini.
+ * 3. Ganti SHEET_ID di bawah dengan ID spreadsheet Anda
+ *    (bagian /d/<ID>/edit dari URL sheet).
+ * 4. Klik Save (Ctrl+S), beri nama project "Hayko Backend".
  * 5. Klik Deploy → New deployment:
  *      - Type          : Web app
  *      - Description   : Hayko API v1
- *      - Execute as    : Me (email pemilik sheet)
+ *      - Execute as    : Me
  *      - Who has access: Anyone
  *    → klik Deploy.
- * 6. Authorize akses saat diminta (klik "Advanced → Go to project → Allow").
- * 7. Salin Web App URL (format: https://script.google.com/macros/s/XXXX/exec).
- *    Set sebagai SHEETS_API_URL di file .env.local / Vercel.
+ * 6. Authorize saat diminta: Advanced → Go to Hayko Backend (unsafe) → Allow.
+ * 7. Salin Web App URL (https://script.google.com/macros/s/XXXX/exec).
+ *    Set sebagai SHEETS_API_URL di .env.local / Vercel.
  *
  * --- SETELAH UPDATE SCRIPT ---
- * Setiap kali script diubah, WAJIB Deploy ulang:
- *   Deploy → Manage deployments → (pilih deployment) → Edit →
- *   Version: New version → Deploy. URL TIDAK berubah.
+ * Setiap perubahan WAJIB re-deploy: Deploy → Manage deployments → Edit →
+ * Version: New version → Deploy. URL TIDAK berubah.
  */
 
 /** === KONFIGURASI === */
+const SHEET_ID = '1mzeRPcBLIsjGpBsSLi2cOtsyvcwG0xMj'; // ID spreadsheet (dari URL)
 const SHEET_NAME = 'Rekap Pesanan';   // nama tab CRUD
 const HEADER_ROWS = 2;                // baris header (judul + sub-header)
 const DATA_START_ROW = 3;             // baris pertama data
@@ -40,9 +40,10 @@ function getToken() {
   return PropertiesService.getScriptProperties().getProperty('APP_TOKEN') || '';
 }
 
-/** Sheet aktif (cache per-request). */
+/** Sheet aktif (cache per-request).
+ *  Pakai openById karena script standalone (tidak bound ke sheet). */
 function getSheet() {
-  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  return SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
 }
 
 /** Mapping kolom A–R → nama field internal. */
